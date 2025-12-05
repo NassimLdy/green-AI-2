@@ -1,0 +1,20 @@
+# --- COMMENT INSTALLER (Ouvre ton terminal) ---
+# 1. Crée le venv  : python -m venv .venv
+# 2. Active-le     : .venv\Scripts\activate
+# 3. Installe tout : pip install -r requirements.txt
+# --------------------------------------------------
+
+torch
+torchvision
+rembg
+onnxruntime
+pillow
+numpy
+tqdm
+codecarbon
+pandas
+matplotlib
+seaborn
+scikit-learn
+pygame
+ipykernel
