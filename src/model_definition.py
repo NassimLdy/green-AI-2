@@ -25,7 +25,7 @@ def build_model(num_classes, pretrained=True):
 
 
 
-def build_model_resnet(num_classes, arch="mobilenetv2", pretrained=True):
+def build_model_resnet(num_classes, arch="resnet18", pretrained=True):
     print(f"Construction du modèle {arch} (pretrained={pretrained})")
 
     if arch == "mobilenetv2":
