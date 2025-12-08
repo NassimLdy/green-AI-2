@@ -1,20 +1,41 @@
 import torch
 import torch.nn as nn
-from torchvision import transforms
+from torchvision import transforms, models
 from PIL import Image
 import os
 import json
 
-# Import de vos architectures
-from model_definition import build_model, build_model_resnet
-
 # --- CONFIGURATION ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))   # dossier src/
 MODELS_DIR = os.path.join(BASE_DIR, "../models")
+MODELS_DIR = os.path.normpath(MODELS_DIR)
 CLASSES_PATH = os.path.join(MODELS_DIR, "classes.json")
 
+# ---------- Définition des architectures (pour reconstruire les modèles) ----------
+
+def build_mobilenet_v2(num_classes: int):
+    """
+    Reconstruit MobileNetV2 avec la même tête que pendant l'entraînement.
+    Attention: weights=None car on va charger NOS poids ensuite.
+    """
+    model = models.mobilenet_v2(weights=None)
+    in_features = model.classifier[1].in_features
+    model.classifier[1] = nn.Linear(in_features, num_classes)
+    return model
+
+def build_resnet18(num_classes: int):
+    """
+    Reconstruit ResNet18 avec la même tête que pendant l'entraînement.
+    """
+    model = models.resnet18(weights=None)
+    in_features = model.fc.in_features
+    model.fc = nn.Linear(in_features, num_classes)
+    return model
+
+# ---------- Classe prédicteur ----------
+
 class WastePredictor:
-    def __init__(self, arch="mobilenetv2"):
+    def __init__(self, arch: str = "mobilenetv2"):
         """
         arch : 'mobilenetv2' ou 'resnet18'
         """
@@ -28,7 +49,7 @@ class WastePredictor:
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                                 std=[0.229, 0.224, 0.225])
+                                 std=[0.229, 0.224, 0.225]),
         ])
         print(f"--- IA de détection prête ({self.arch}) ---")
 
@@ -37,12 +58,12 @@ class WastePredictor:
     def get_model_path(self):
         """
         Renvoie le chemin du fichier de poids en fonction de l'architecture.
-        À adapter si tu as choisi d'autres noms de fichiers.
+        Adapté aux noms que tu utilises dans le notebook.
         """
         if self.arch == "mobilenetv2":
-            filename = "best_mobilenetv2_sand.pth"
+            filename = "mobilenetv2_trash.pth"   # <--- adapté
         elif self.arch == "resnet18":
-            filename = "best_resnet18_sand.pth"
+            filename = "resnet18_trash.pth"      # <--- adapté
         else:
             raise ValueError(f"Architecture inconnue : {self.arch}")
 
@@ -54,29 +75,37 @@ class WastePredictor:
         if not os.path.exists(CLASSES_PATH):
             print(f"ERREUR: Fichier classes.json introuvable ({CLASSES_PATH})")
             return []
-        with open(CLASSES_PATH, 'r') as f:
-            return json.load(f)
+        with open(CLASSES_PATH, "r") as f:
+            classes = json.load(f)
+        print("Classes chargées :", classes)
+        return classes
 
     def load_model(self):
         model_path = self.get_model_path()
 
         if not os.path.exists(model_path):
-            print(f"ERREUR: Modèle introuvable ({model_path}). As-tu lancé train.py ?")
+            print(f"ERREUR: Modèle introuvable ({model_path}). As-tu bien sauvegardé le .pth depuis le notebook ?")
             return None
             
-        # Reconstruit l'architecture correspondante
+        num_classes = len(self.classes)
+        if num_classes == 0:
+            print("ERREUR: aucune classe chargée, impossible de construire le modèle.")
+            return None
+
+        # Reconstruire l'architecture
         if self.arch == "mobilenetv2":
-            model = build_model(num_classes=len(self.classes), pretrained=False)
+            model = build_mobilenet_v2(num_classes)
         elif self.arch == "resnet18":
-            model = build_model_resnet(num_classes=len(self.classes), pretrained=False)
+            model = build_resnet18(num_classes)
         else:
             raise ValueError(f"Architecture inconnue : {self.arch}")
         
-        # Charge les poids
+        # Charger les poids
         state_dict = torch.load(model_path, map_location=self.device)
         model.load_state_dict(state_dict)
         model.to(self.device)
         model.eval()  # Mode évaluation
+        print(f"Poids chargés depuis : {model_path}")
         return model
 
     # ---------- Prédiction ----------
@@ -84,6 +113,7 @@ class WastePredictor:
     def predict(self, image_or_path):
         """
         Prédit la classe d'une image (soit un chemin, soit une image PIL directe)
+        Retourne (classe_prédite, probabilité_max)
         """
         if self.model is None:
             return "Erreur Modèle", 0.0
@@ -109,5 +139,5 @@ class WastePredictor:
 
         return predicted_class, confidence
 
-# Instance par défaut (MobileNetV2) – utile si tu ne gères pas le choix utilisateur
+# Instance par défaut (MobileNetV2)
 predictor = WastePredictor(arch="mobilenetv2")
