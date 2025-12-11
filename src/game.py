@@ -137,7 +137,7 @@ def choose_model(screen, clock):
             "1  •  MobileNetV2",
             font_btn,
             active=True,
-            hint="Fast & energy-efficient"
+            hint="Fast"
         )
 
         rect2 = (start_x + card_width + spacing, y, card_width, card_height)
@@ -147,7 +147,7 @@ def choose_model(screen, clock):
             "2  •  ResNet18",
             font_btn,
             active=False,
-            hint="Deeper, potentially more accurate"
+            hint="Deeper"
         )
 
         hint_text = "Press 1 or 2 to start the simulation"
@@ -177,7 +177,7 @@ def draw_co2_bar(screen, x, y, width, height, current_kg):
     if fill_width > 0:
         pygame.draw.rect(screen, UI_GREEN, (x, y, fill_width, height), border_radius=8)
 
-
+'''
 def main():
     pygame.init()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -373,6 +373,201 @@ def main():
         clock.tick(FPS)
 
     pygame.quit()
+'''
+
+def main():
+    pygame.init()
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    pygame.display.set_caption("Green AI - Analyse Performance & Confiance")
+    clock = pygame.time.Clock()
+    
+    # Fonts
+    font_main    = pygame.font.Font(None, 40)
+    font_status  = pygame.font.Font(None, 34)
+    font_sub     = pygame.font.Font(None, 30)
+    font_label   = pygame.font.Font(None, 24)
+    font_stats   = pygame.font.Font(None, 26)
+    font_small   = pygame.font.Font(None, 20)
+
+    predictor = choose_model(screen, clock)
+
+    env = Environment()
+    robot = Robot()
+    
+    all_sprites = pygame.sprite.Group(robot)
+    waste_group = pygame.sprite.Group()
+
+    last_real = "..."
+    last_pred = "..."
+    last_conf = 0.0
+
+    collected_counts = {cls: 0 for cls in CO2_CONFIG.keys()}
+    total_co2_kg = 0.0
+
+    SPAWN_EVENT = pygame.USEREVENT + 1
+    pygame.time.set_timer(SPAWN_EVENT, 1500)
+
+    running = True
+    while running:
+        # ---------- EVENTS ----------
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == SPAWN_EVENT:
+                if len(waste_group) < 6:
+                    w = Waste()
+                    all_sprites.add(w)
+                    waste_group.add(w)
+
+        # ---------- UPDATE ----------
+        all_sprites.update()
+
+        # =====================================================
+        # COLLISION : l’objet est TOUJOURS ramassé (kill),
+        # mais le CO₂ n'est compté QUE si la prédiction est correcte.
+        # =====================================================
+        hits = pygame.sprite.spritecollide(robot, waste_group, False)
+        for w in hits:
+            if w.image_path:
+                pred, conf = predictor.predict(w.image_path)
+
+                last_real = w.category
+                last_pred = pred
+                last_conf = conf
+
+                print(f"[Analyse] Réel: {last_real} | IA: {last_pred} ({conf:.0%})")
+
+                if last_real == last_pred:
+                    # ✔️ CORRECT → comptabilisation du CO₂
+                    label = w.category
+                    if label in collected_counts:
+                        collected_counts[label] += 1
+                        gained_kg = compute_co2_for_item(label)
+                        total_co2_kg += gained_kg
+
+                        print(
+                            f"[CO2] Correct → {label} ramassé +{gained_kg:.3f} kg (total={total_co2_kg:.3f} kg)"
+                        )
+                else:
+                    # ❌ FAUX → ramassé mais CO₂ non compté
+                    print("[CO2] Mauvaise prédiction → objet ramassé mais NON compté dans le CO₂.")
+
+                # Dans tous les cas : l'objet disparaît
+                w.kill()
+
+        # =============================
+        # AFFICHAGE DU MONDE
+        # =============================
+        env.draw(screen)
+        all_sprites.draw(screen)
+
+        for waste in waste_group:
+            text_surf = font_label.render(waste.category, True, BLUE)
+            text_rect = text_surf.get_rect(center=(waste.rect.centerx, waste.rect.y - 15))
+            screen.blit(text_surf, text_rect)
+
+        # === HUD EN BAS ===
+        hud_height = 200
+        hud_y = SCREEN_HEIGHT - hud_height
+
+        hud_bg = pygame.Surface((SCREEN_WIDTH, hud_height), pygame.SRCALPHA)
+        hud_bg.fill((5, 10, 20, 220))
+        screen.blit(hud_bg, (0, hud_y))
+
+        column_width = SCREEN_WIDTH // 3
+        padding = 12
+        panel_radius = 20
+
+        panel1_rect = pygame.Rect(padding, hud_y + padding, column_width - 2 * padding, hud_height - 2 * padding)
+        panel2_rect = pygame.Rect(column_width + padding, hud_y + padding, column_width - 2 * padding, hud_height - 2 * padding)
+        panel3_rect = pygame.Rect(2 * column_width + padding, hud_y + padding, column_width - 2 * padding, hud_height - 2 * padding)
+
+        pygame.draw.rect(screen, UI_PANEL, panel1_rect, border_radius=panel_radius)
+        pygame.draw.rect(screen, UI_PANEL, panel2_rect, border_radius=panel_radius)
+        pygame.draw.rect(screen, UI_PANEL, panel3_rect, border_radius=panel_radius)
+
+        # ---------- PANEL 1 : ACCURACY ----------
+        if last_pred == "...":
+            acc_color = UI_GRAY
+            status_label = "Waiting for first prediction..."
+            icon = "•"
+        elif last_real == last_pred:
+            acc_color = UI_GREEN
+            status_label = "Prediction: CORRECT"
+            icon = "✓"
+        else:
+            acc_color = UI_RED
+            status_label = "Prediction: WRONG"
+            icon = "✗"
+
+        p1_title = font_small.render("MODEL ACCURACY", True, UI_GRAY)
+        screen.blit(p1_title, (panel1_rect.x + 16, panel1_rect.y + 12))
+
+        status_surf = font_status.render(f"{icon} {status_label}", True, acc_color)
+        screen.blit(status_surf, (panel1_rect.x + 16, panel1_rect.y + 40))
+
+        if last_pred != "...":
+            screen.blit(font_small.render(f"Ground truth : {last_real}", True, UI_WHITE), (panel1_rect.x + 16, panel1_rect.y + 85))
+            screen.blit(font_small.render(f"Model output : {last_pred}", True, UI_WHITE), (panel1_rect.x + 16, panel1_rect.y + 110))
+
+        # ---------- PANEL 2 : CONFIANCE ----------
+        p2_title = font_small.render("MODEL CONFIDENCE", True, UI_GRAY)
+        screen.blit(p2_title, (panel2_rect.x + 16, panel2_rect.y + 12))
+
+        if last_conf > 0.75:
+            conf_color = UI_GREEN
+            conf_label = "Confident"
+        elif last_conf > 0.0:
+            conf_color = UI_ORANGE
+            conf_label = "Uncertain"
+        else:
+            conf_color = UI_GRAY
+            conf_label = "N/A"
+
+        conf_text = f"{last_conf:.1%}" if last_pred != "..." else "--"
+        conf_surf = font_main.render(conf_text, True, conf_color)
+        conf_rect = conf_surf.get_rect()
+        conf_rect.midleft = (panel2_rect.x + 20, panel2_rect.y + 70)
+        screen.blit(conf_surf, conf_rect)
+
+        conf_label_surf = font_small.render(conf_label, True, conf_color)
+        conf_label_rect = conf_label_surf.get_rect()
+        conf_label_rect.topleft = (panel2_rect.x + 20, panel2_rect.y + 105)
+        screen.blit(conf_label_surf, conf_label_rect)
+
+        bar_x = panel2_rect.x + 16
+        bar_y = panel2_rect.y + 135
+        bar_w = panel2_rect.width - 32
+        bar_h = 18
+        draw_confidence_bar(screen, bar_x, bar_y, bar_w, bar_h, last_conf if last_pred != "..." else 0.0)
+
+        # ---------- PANEL 3 : CO₂ ----------
+        p3_title = font_small.render("ECO IMPACT", True, UI_GRAY)
+        screen.blit(p3_title, (panel3_rect.x + 16, panel3_rect.y + 12))
+
+        co2_text = font_stats.render(f"CO2 avoided: {total_co2_kg:.2f} kg", True, UI_WHITE)
+        screen.blit(co2_text, (panel3_rect.x + 16, panel3_rect.y + 35))
+
+        co2_bar_x = panel3_rect.x + 16
+        co2_bar_y = panel3_rect.y + 60
+        co2_bar_w = panel3_rect.width - 32
+        co2_bar_h = 18
+        draw_co2_bar(screen, co2_bar_x, co2_bar_y, co2_bar_w, co2_bar_h, total_co2_kg)
+
+        goal_text = font_small.render(f"Symbolic goal: {MAX_CO2_GOAL_KG:.1f} kg", True, UI_GRAY)
+        screen.blit(goal_text, (panel3_rect.x + 16, panel3_rect.y + 86))
+
+        start_y_counts = panel3_rect.y + 104
+        line_spacing = 17
+        for i, (cls, count) in enumerate(collected_counts.items()):
+            txt_surf = font_small.render(f"{cls}: {count}", True, UI_WHITE)
+            screen.blit(txt_surf, (panel3_rect.x + 16, start_y_counts + i * line_spacing))
+
+        pygame.display.flip()
+        clock.tick(FPS)
+
+    pygame.quit()
+
 
 
 if __name__ == "__main__":
